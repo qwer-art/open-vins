@@ -1,0 +1,22 @@
+# Build directories
+src/build/
+src/log/
+src/install/
+
+# Data files
+src/Data/
+
+# Prompt directory
+prompt/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.*~
+
+# Generated
+doxgen_generated/
+doc/
+cmake-build-*
