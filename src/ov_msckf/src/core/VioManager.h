@@ -136,6 +136,9 @@ public:
     feat_tracks_uvd = active_tracks_uvd;
   }
 
+  /// Accessor to get the feature tracker
+  std::shared_ptr<ov_core::TrackBase> get_trackFEATS() { return trackFEATS; }
+
 protected:
   /**
    * @brief Given a new set of camera images, this will track them.

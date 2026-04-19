@@ -40,7 +40,12 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 #include <tf2/LinearMath/Quaternion.h>
+
+#include "ov_msckf/msg/debug_features.hpp"
+#include "ov_msckf/msg/debug_state.hpp"
+#include "ov_msckf/msg/debug_residuals.hpp"
 #include <tf2/transform_datatypes.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf2_ros/transform_broadcaster.h>
@@ -135,6 +140,9 @@ protected:
   /// Publish loop-closure information of current pose and active track information
   void publish_loopclosure_information();
 
+  /// Publish debug data for monitoring
+  void publish_debug_data();
+
   /// Global node handler
   std::shared_ptr<rclcpp::Node> _node;
 
@@ -154,6 +162,11 @@ protected:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud>::SharedPtr pub_loop_point;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_loop_intrinsics;
   std::shared_ptr<tf2_ros::TransformBroadcaster> mTfBr;
+
+  // Debug publishers
+  rclcpp::Publisher<ov_msckf::msg::DebugFeatures>::SharedPtr pub_debug_features;
+  rclcpp::Publisher<ov_msckf::msg::DebugState>::SharedPtr pub_debug_state;
+  rclcpp::Publisher<ov_msckf::msg::DebugResiduals>::SharedPtr pub_debug_residuals;
 
   // Our subscribers and camera synchronizers
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu;

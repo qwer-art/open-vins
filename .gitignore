@@ -6,6 +6,9 @@ src/install/
 # Data files
 src/Data/
 
+# Logs
+logs/
+
 # Prompt directory
 prompt/
 
@@ -20,3 +23,4 @@ prompt/
 doxgen_generated/
 doc/
 cmake-build-*
+src/ov_data/

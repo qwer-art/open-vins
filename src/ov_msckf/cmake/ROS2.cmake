@@ -13,6 +13,7 @@ find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(ov_core REQUIRED)
 find_package(ov_init REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 # Describe ROS project
 option(ENABLE_ROS "Enable or disable building with ROS (if it is found)" ON)
@@ -49,6 +50,14 @@ list(APPEND ament_libraries
         ov_init
 )
 
+# Generate custom debug messages
+rosidl_generate_interfaces(${PROJECT_NAME}
+        "msg/DebugFeatures.msg"
+        "msg/DebugState.msg"
+        "msg/DebugResiduals.msg"
+        DEPENDENCIES std_msgs
+)
+
 ##################################################
 # Make the shared library
 ##################################################
@@ -70,7 +79,8 @@ list(APPEND LIBRARY_SOURCES src/ros/ROS2Visualizer.cpp src/ros/ROSVisualizerHelp
 file(GLOB_RECURSE LIBRARY_HEADERS "src/*.h")
 add_library(ov_msckf_lib SHARED ${LIBRARY_SOURCES} ${LIBRARY_HEADERS})
 ament_target_dependencies(ov_msckf_lib ${ament_libraries})
-target_link_libraries(ov_msckf_lib ${thirdparty_libraries})
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} rosidl_typesupport_cpp)
+target_link_libraries(ov_msckf_lib "${cpp_typesupport_target}" ${thirdparty_libraries})
 target_include_directories(ov_msckf_lib PUBLIC src/)
 install(TARGETS ov_msckf_lib
         LIBRARY DESTINATION lib

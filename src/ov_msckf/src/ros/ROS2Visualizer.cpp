@@ -80,6 +80,14 @@ ROS2Visualizer::ROS2Visualizer(std::shared_ptr<rclcpp::Node> node, std::shared_p
   it_pub_loop_img_depth = it.advertise("loop_depth", 2);
   it_pub_loop_img_depth_color = it.advertise("loop_depth_colored", 2);
 
+  // Debug publishers
+  pub_debug_features = node->create_publisher<ov_msckf::msg::DebugFeatures>("debug/features", 10);
+  PRINT_DEBUG("Publishing: %s\n", pub_debug_features->get_topic_name());
+  pub_debug_state = node->create_publisher<ov_msckf::msg::DebugState>("debug/state", 10);
+  PRINT_DEBUG("Publishing: %s\n", pub_debug_state->get_topic_name());
+  pub_debug_residuals = node->create_publisher<ov_msckf::msg::DebugResiduals>("debug/residuals", 10);
+  PRINT_DEBUG("Publishing: %s\n", pub_debug_residuals->get_topic_name());
+
   // option to enable publishing of global to IMU transformation
   if (node->has_parameter("publish_global_to_imu_tf")) {
     node->get_parameter<bool>("publish_global_to_imu_tf", publish_global2imu_tf);
@@ -254,6 +262,9 @@ void ROS2Visualizer::visualize() {
 
   // Publish keyframe information
   publish_loopclosure_information();
+
+  // Publish debug data
+  publish_debug_data();
 
   // Save total state
   if (save_total_state) {
@@ -996,4 +1007,82 @@ void ROS2Visualizer::publish_loopclosure_information() {
     sensor_msgs::msg::Image::SharedPtr exl_msg2 = cv_bridge::CvImage(header, "bgr8", depthmap_viz).toImageMsg();
     it_pub_loop_img_depth_color.publish(exl_msg2);
   }
+}
+
+void ROS2Visualizer::publish_debug_data() {
+
+  // Get current state
+  std::shared_ptr<State> state = _app->get_state();
+
+  // Get timestamp
+  double t_ItoC = state->_calib_dt_CAMtoIMU->value()(0);
+  double timestamp = state->_timestamp + t_ItoC;
+  auto ros_time = ROSVisualizerHelper::get_time_from_seconds(timestamp);
+
+  // 1. Publish feature statistics
+  auto msg_features = ov_msckf::msg::DebugFeatures();
+  msg_features.header.stamp = ros_time;
+
+  if (_app->get_params().state_options.num_cameras > 0) {
+    auto last_obs = _app->get_trackFEATS()->get_last_obs();
+    auto last_ids = _app->get_trackFEATS()->get_last_ids();
+
+    int num_tracked = 0;
+    if (last_ids.find(0) != last_ids.end()) {
+      num_tracked = last_ids[0].size();
+    }
+
+    int num_extracted = _app->get_trackFEATS()->get_num_features();
+
+    int num_3d = 0;
+    double active_time;
+    std::unordered_map<size_t, Eigen::Vector3d> active_tracks_posinG;
+    std::unordered_map<size_t, Eigen::Vector3d> active_tracks_uvd;
+    _app->get_active_tracks(active_time, active_tracks_posinG, active_tracks_uvd);
+    num_3d = active_tracks_posinG.size();
+
+    int num_active = state->_features_SLAM.size();
+
+    msg_features.num_extracted = num_extracted;
+    msg_features.num_tracked = num_tracked;
+    msg_features.num_3d = num_3d;
+    msg_features.num_active = num_active;
+  }
+
+  pub_debug_features->publish(msg_features);
+
+  // 2. Publish IMU state
+  auto msg_state = ov_msckf::msg::DebugState();
+  msg_state.header.stamp = ros_time;
+
+  msg_state.pos_x = state->_imu->pos()(0);
+  msg_state.pos_y = state->_imu->pos()(1);
+  msg_state.pos_z = state->_imu->pos()(2);
+
+  msg_state.vel_x = state->_imu->vel()(0);
+  msg_state.vel_y = state->_imu->vel()(1);
+  msg_state.vel_z = state->_imu->vel()(2);
+
+  msg_state.bias_gyro_x = state->_imu->bias_g()(0);
+  msg_state.bias_gyro_y = state->_imu->bias_g()(1);
+  msg_state.bias_gyro_z = state->_imu->bias_g()(2);
+
+  msg_state.bias_accel_x = state->_imu->bias_a()(0);
+  msg_state.bias_accel_y = state->_imu->bias_a()(1);
+  msg_state.bias_accel_z = state->_imu->bias_a()(2);
+
+  msg_state.quat_x = state->_imu->quat()(0);
+  msg_state.quat_y = state->_imu->quat()(1);
+  msg_state.quat_z = state->_imu->quat()(2);
+  msg_state.quat_w = state->_imu->quat()(3);
+
+  pub_debug_state->publish(msg_state);
+
+  // 3. Publish residuals (placeholder)
+  auto msg_residuals = ov_msckf::msg::DebugResiduals();
+  msg_residuals.header.stamp = ros_time;
+  msg_residuals.res_visual = 0.0;
+  msg_residuals.res_imu = 0.0;
+
+  pub_debug_residuals->publish(msg_residuals);
 }
