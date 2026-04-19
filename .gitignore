@@ -2,9 +2,13 @@
 src/build/
 src/log/
 src/install/
+build/
+install/
+log/
 
 # Data files
 src/Data/
+Data/
 
 # Logs
 logs/
@@ -23,4 +27,18 @@ prompt/
 doxgen_generated/
 doc/
 cmake-build-*
+
+# Data files (large datasets)
 src/ov_data/
+*.bag
+*.db3
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Misc
+.DS_Store
+*.log
