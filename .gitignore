@@ -10,6 +10,9 @@ log/
 src/Data/
 Data/
 
+# Recorded data
+src/scripts/data/
+
 # Logs
 logs/
 

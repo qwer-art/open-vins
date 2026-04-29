@@ -28,17 +28,74 @@ ros2 launch ov_msckf subscribe.launch.py config:=tum_vi rviz_enable:=true
 
 ## 2. 播放Bag
 
-```bash
-# 方式一：使用别名（推荐）
-ov_play
+### 2.1 使用别名（推荐）
 
-# 方式二：完整命令
-ros2 bag play /home/jerett/OpenProject/LidarSlam/open-vins/src/Data/dataset-room1_512_16_ros2 --clock
+`ov_play` 别名支持速率参数，可以灵活控制播放速度：
+
+```bash
+# 1倍速播放（默认）
+ov_play 1
+
+# 5倍速播放（快速测试）
+ov_play 5
+
+# 半速播放（慢速分析）
+ov_play 0.5
+
+# 2倍速播放
+ov_play 2
+
+# 10倍速播放（极速测试）
+ov_play 10
 ```
 
-**可选参数：**
-- `--rate 0.5` - 0.5倍速播放
-- `--loop` - 循环播放
+### 2.2 使用完整命令
+
+```bash
+# 基础播放（1倍速）
+ros2 bag play /home/jerett/OpenProject/LidarSlam/open-vins/src/Data/dataset-room1_512_16_ros2 --clock
+
+# 5倍速播放
+ros2 bag play /home/jerett/OpenProject/LidarSlam/open-vins/src/Data/dataset-room1_512_16_ros2 --clock --rate 5
+
+# 其他常用参数
+ros2 bag play /path/to/bag --clock --loop          # 循环播放
+ros2 bag play /path/to/bag --clock --start-offset 10  # 从第10秒开始
+ros2 bag play /path/to/bag --clock --duration 30   # 只播放30秒
+```
+
+### 2.3 播放时键盘控制
+
+播放过程中可以使用键盘实时调整速率：
+
+|按键 | 功能 |
+|-----|------|
+| **空格** | 暂停/继续 |
+| **右箭头** | 播放下一条消息（暂停时） |
+| **上箭头** | 增加速率 10% |
+| **下箭头** | 减少速率 10% |
+
+**示例操作流程**：
+1. `ov_play 1` - 开始1倍速播放
+2. 按 **上箭头** 5次 - 逐步增加到1.5倍速
+3. 按 **空格** - 暂停查看当前状态
+4. 按 **右箭头** - 单步播放下一条消息
+5. 按 **空格** - 继续播放
+
+### 2.4 速率选择建议
+
+| 场景 | 推荐速率 | 说明 |
+|------|---------|------|
+| **首次运行** | 1倍速 | 观察完整过程，检查初始化 |
+| **快速测试** | 5倍速 | 验证算法是否正常工作 |
+| **调试问题** | 0.5倍速 | 慢速观察特征跟踪、状态变化 |
+| **性能测试** | 10倍速 | 测试系统处理能力 |
+| **轨迹评估** | 1倍速 | 精确评估，避免时间同步问题 |
+
+**注意**：
+- 速率过高可能导致系统处理不过来，出现消息队列堆积
+- 使用 `--clock` 参数确保时间同步（VIO系统依赖仿真时钟）
+- 键盘控制适合微调速率，不适合大幅调整
 
 ## 3. ROS2可视化Pose
 

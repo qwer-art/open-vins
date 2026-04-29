@@ -64,7 +64,7 @@ export PATH="/snap/bin:$PATH"
 
 # 设置常用别名
 alias ov_run='ros2 launch ov_msckf subscribe.launch.py config:=tum_vi rviz_enable:=true'
-alias ov_play='ros2 bag play ${SRC_DIR}/Data/dataset-room1_512_16_ros2 --clock'
+alias ov_play='ros2 bag play ${SRC_DIR}/Data/dataset-room1_512_16_ros2 --clock --rate'
 alias ov_cd='cd ${OPENVINS_DIR}'
 alias plotjuggler='/opt/ros/humble/lib/plotjuggler/plotjuggler'
 
@@ -75,10 +75,13 @@ echo -e "${GREEN}========================================${NC}"
 echo ""
 echo -e "常用命令："
 echo -e "  ov_run   - 启动OpenVINS节点"
-echo -e "  ov_play  - 播放bag文件"
+echo -e "  ov_play  - 播放bag文件（支持速率参数）"
+echo -e "            示例: ov_play 1   (1倍速，默认)"
+echo -e "                  ov_play 5   (5倍速)"
+echo -e "                  ov_play 0.5 (半速)"
 echo -e "  ov_cd    - 进入项目目录"
 echo ""
 echo -e "手动运行："
 echo -e "  ros2 launch ov_msckf subscribe.launch.py config:=euroc_mav rviz_enable:=true"
-echo -e "  ros2 bag play ${SRC_DIR}/Data/dataset-room1_512_16_ros2 --clock"
+echo -e "  ros2 bag play ${SRC_DIR}/Data/dataset-room1_512_16_ros2 --clock --rate 5"
 echo ""
