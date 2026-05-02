@@ -112,7 +112,7 @@ def pose_to_transform_matrix(position, orientation):
     return T
 
 
-def draw_grid_y(resolution=2., center=np.array([0, 0, 0])):
+def draw_grid_y(resolution=1., center=np.array([0, 0, 0])):
     """Draw grid on XY plane (Z=0 plane) for top-down view"""
     num_cells = 100
 
@@ -208,12 +208,12 @@ def draw_arrow(start, end, line_width=2, color=Color.kBlack):
 
 
 def TopViewY(center=np.array([0, 0, 0])):
-    """Top view looking down along Z axis, with Z-axis pointing up"""
+    """Top view looking down along Z axis, with Y-axis as up, 15m distance"""
     scam = pangolin.OpenGlRenderState(
         pangolin.ProjectionMatrix(1920, 1080, 2000, 2000, 960, 540, 0.1, 500),
-        pangolin.ModelViewLookAt(center[0], center[1], center[2] + 150,
+        pangolin.ModelViewLookAt(center[0], center[1], center[2] + 15,
                                  center[0], center[1], center[2],
-                                 0, 1, 0))
+                                 1, 0, 0))
     return scam
 
 
@@ -283,7 +283,7 @@ def load_points_msckf_data(data_dir):
     return data_list
 
 
-def create_text_image(frame_idx, frame_size, odometry_data, width=320, height=540):
+def create_text_image(frame_idx, frame_size, odometry_data, frame_distances=None, points_data=None, width=320, height=540):
     """Create text information image with units and dark color scheme"""
     txt_image = np.ones((height, width, 3), dtype=np.uint8) * 240
 
@@ -303,23 +303,22 @@ def create_text_image(frame_idx, frame_size, odometry_data, width=320, height=54
         cv2.putText(txt_image, txt, (10, 40 * idx),
                    4, 0.8, color2bgr(Color.kDarkGray), 2)
 
-    # Position - Dark Red
-    if frame_idx < len(odometry_data):
-        pos = odometry_data[frame_idx]['pose']['position']
-        txt = f"x: {pos['x']:.3f} m"
+    # Frame distance - Dark Magenta
+    if frame_distances is not None and frame_idx < len(frame_distances):
+        txt = f"Dist: {frame_distances[frame_idx]:.3f} m"
         idx += 1
         cv2.putText(txt_image, txt, (10, 40 * idx),
-                   4, 0.8, color2bgr(Color.kDarkRed), 2)
+                   4, 0.8, color2bgr(Color.kDarkMagenta), 2)
 
-        txt = f"y: {pos['y']:.3f} m"
-        idx += 1
-        cv2.putText(txt_image, txt, (10, 40 * idx),
-                   4, 0.8, color2bgr(Color.kDarkRed), 2)
-
-        txt = f"z: {pos['z']:.3f} m"
-        idx += 1
-        cv2.putText(txt_image, txt, (10, 40 * idx),
-                   4, 0.8, color2bgr(Color.kDarkRed), 2)
+    # Feature points count - Dark Green
+    if points_data is not None and frame_idx < len(points_data):
+        points_frame = points_data[frame_idx]
+        if 'points' in points_frame:
+            num_points = len(points_frame['points'])
+            txt = f"Features: {num_points}"
+            idx += 1
+            cv2.putText(txt_image, txt, (10, 40 * idx),
+                       4, 0.8, color2bgr(Color.kDarkGreen), 2)
 
     # Velocity magnitude - Dark Cyan
     if frame_idx < len(odometry_data):
@@ -402,3 +401,69 @@ def draw_coordinate_frame(T, length, line_width=3):
     # Z-axis (Blue)
     set_gl_color(Color.kBlue)
     pangolin.DrawLine([origin, z_end])
+
+
+def draw_camera_frustum(T, scale=0.3, line_width=2, color=Color.kMagenta):
+    """
+    Draw camera frustum (pyramid shape showing camera view direction)
+    T: 4x4 transformation matrix (camera pose in world frame)
+    scale: size of the frustum
+    line_width: width of the lines
+    color: color of the frustum
+
+    Camera convention: Z-axis forward, X-axis right, Y-axis down
+    """
+    origin = T[:3, 3]
+    R = T[:3, :3]
+
+    # Define frustum corners in camera frame
+    # Typical camera: Z forward, X right, Y down
+    # Frustum shape: pyramid with rectangular base
+    fov_half = 30.0 * np.pi / 180.0  # 30 degree half FOV
+    depth = scale
+
+    # Four corners of the frustum base (far plane)
+    half_w = depth * np.tan(fov_half)
+    half_h = depth * np.tan(fov_half)
+
+    # Corners in camera frame: [x, y, z]
+    corners_cam = [
+        [half_w, half_h, depth],    # top-right
+        [-half_w, half_h, depth],   # top-left
+        [-half_w, -half_h, depth],  # bottom-left
+        [half_w, -half_h, depth]    # bottom-right
+    ]
+
+    # Transform corners to world frame
+    corners_world = []
+    for corner in corners_cam:
+        corner_world = origin + R @ np.array(corner)
+        corners_world.append(corner_world)
+
+    # Draw frustum lines
+    set_gl_color(color)
+    gl.glLineWidth(line_width)
+
+    # Draw lines from origin to each corner
+    for corner in corners_world:
+        pangolin.DrawLine([origin, corner])
+
+    # Draw lines connecting corners (base rectangle)
+    for i in range(4):
+        pangolin.DrawLine([corners_world[i], corners_world[(i+1) % 4]])
+
+
+def draw_text_3d(position, text, color=Color.kWhite, scale=0.005):
+    """
+    Draw 3D text at a given position (requires Pangolin's DrawText function)
+    Note: This is a placeholder - actual 3D text rendering may require additional setup
+    Args:
+        position: 3D position [x, y, z]
+        text: text string to display
+        color: text color
+        scale: text scale
+    """
+    # Pangolin doesn't have a direct 3D text function in Python bindings
+    # This is a placeholder for future implementation
+    # For now, we'll use comments in the code to document the coordinate frames
+    pass
