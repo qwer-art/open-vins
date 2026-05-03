@@ -9,6 +9,7 @@ import numpy as np
 import sys
 import os
 import time
+import yaml
 from natsort import natsorted
 
 # Add utils to path
@@ -28,6 +29,28 @@ from utils.visualization_utils import (
     create_text_image, calculate_frame_distances,
     draw_coordinate_frame, draw_camera_frustum
 )
+
+
+def load_cam_extrinsics(calib_path):
+    """Load camera extrinsics from Kalibr calib file (OpenCV YAML format)
+
+    Returns dict: {cam_id: T_CtoI (4x4)} where T_CtoI = [R_CtoI, p_CinI]
+    """
+    import re
+    with open(calib_path, 'r') as f:
+        content = f.read()
+
+    extrinsics = {}
+    pattern = r'cam(\d+):\s*\n\s*T_imu_cam:.*?\n\s*-\s*\[([^\]]+)\]\s*\n\s*-\s*\[([^\]]+)\]\s*\n\s*-\s*\[([^\]]+)\]\s*\n\s*-\s*\[([^\]]+)\]'
+    for m in re.finditer(pattern, content):
+        cam_id = int(m.group(1))
+        rows = []
+        for i in range(2, 6):
+            vals = [float(v.strip()) for v in m.group(i).split(',')]
+            rows.append(vals)
+        extrinsics[cam_id] = np.array(rows)
+
+    return extrinsics
 
 
 def load_camera_image(data_dir, cam_name, frame_time):
@@ -129,35 +152,55 @@ def main(data_dir):
         return
 
     # Extract trajectory from odometry_data
-    positions = []
-    orientations = []
+    # p_IinG: IMU position in Global frame (IMU在Global坐标系中的位置)
+    p_IinG = []
+    # q_ItoG: Quaternion from IMU to Global frame (IMU到Global的Hamilton四元数)
+    # OpenVINS内部用JPL四元数存储q_GtoI，发布到ROS时隐式转换为Hamilton的q_ItoG
+    # 数学性质：JPL的q_GtoI [x,y,z,w] == Hamilton的q_ItoG [x,y,z,w]
+    # 所以ROS odomimu中的orientation直接就是q_ItoG，无需取共轭
+    q_ItoG = []
     covariances = []
 
     for data in odometry_data:
         pos = data['pose']['position']
-        ori = data['pose']['orientation']
+        ori = data['pose']['orientation']  # 这是Hamilton q_ItoG (x,y,z,w)
         cov = data['pose']['covariance']
 
-        positions.append([pos['x'], pos['y'], pos['z']])
-        orientations.append([ori['x'], ori['y'], ori['z'], ori['w']])
+        p_IinG.append([pos['x'], pos['y'], pos['z']])
+
+        # ROS发布的orientation已经是Hamilton q_ItoG，直接使用
+        q_ItoG.append([ori['x'], ori['y'], ori['z'], ori['w']])
 
         # Convert 36-element covariance to 6x6 matrix
         cov_matrix = np.array(cov).reshape(6, 6)
         covariances.append(cov_matrix)
 
-    positions = np.array(positions)
-    orientations = np.array(orientations)
+    p_IinG = np.array(p_IinG)
+    q_ItoG = np.array(q_ItoG)
+
+    # Load camera extrinsics (T_CtoI) from Kalibr calib file
+    # data_dir: .../open-vins/src/scripts/data/<session>/asset_data
+    # calib:    .../open-vins/src/config/euroc_mav/kalibr_imucam_chain.yaml
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    calib_path = os.path.join(script_dir, '..', 'config', 'euroc_mav', 'kalibr_imucam_chain.yaml')
+    calib_path = os.path.abspath(calib_path)
+    cam_extrinsics = {}
+    if os.path.exists(calib_path):
+        cam_extrinsics = load_cam_extrinsics(calib_path)
+        print(f"Loaded camera extrinsics for cams: {list(cam_extrinsics.keys())}")
+    else:
+        print(f"Warning: calib file not found at {calib_path}, camera frustums disabled")
 
     # Build frame_time list for camera image lookup
     frame_times = [d['frame_time'] for d in odometry_data]
 
     # Calculate frame distances (cumulative chord length)
     print("Calculating frame distances...")
-    frame_distances = calculate_frame_distances(positions)
+    frame_distances = calculate_frame_distances(p_IinG)
     print(f"Total distance: {frame_distances[-1]:.3f} m")
 
     # Calculate center for view
-    center = np.mean(positions, axis=0) if len(positions) > 0 else np.zeros(3)
+    center = np.mean(p_IinG, axis=0) if len(p_IinG) > 0 else np.zeros(3)
 
     frame_size = len(odometry_data)
     current_frame_idx = 0
@@ -207,15 +250,17 @@ def main(data_dir):
     show_top_view = pangolin.VarBool('ui.TopView', value=True, toggle=False)
     show_grid = pangolin.VarBool('ui.grid', value=True, toggle=True)
     show_global_frame = pangolin.VarBool('ui.GlobalFrame (G)', value=True, toggle=True)
-    show_trajectory = pangolin.VarBool('ui.p_IinG (trajectory)', value=True, toggle=True)
-    show_q_GtoI = pangolin.VarBool('ui.q_GtoI (IMU frame)', value=True, toggle=True)
-    show_v_IinG = pangolin.VarBool('ui.v_IinG (velocity)', value=True, toggle=True)
-    show_pointcloud = pangolin.VarBool('ui.pointcloud', value=True, toggle=True)
+    show_p_IinG = pangolin.VarBool('ui.p_IinG', value=True, toggle=True)
+    show_q_ItoG = pangolin.VarBool('ui.q_ItoG', value=True, toggle=True)
+    show_v_IinG = pangolin.VarBool('ui.v_IinG', value=True, toggle=True)
+    show_cam_frustums = pangolin.VarBool('ui.cam_frustums', value=True, toggle=True)
+    show_pts_inG = pangolin.VarBool('ui.pts_inG', value=True, toggle=True)
     show_cam_images = pangolin.VarBool('ui.cam_images', value=True, toggle=True)
     auto_play = pangolin.VarBool('ui.Auto Play', value=False, toggle=False)
     play_step = pangolin.VarBool('ui.>>', value=False, toggle=False)
     play_back = pangolin.VarBool('ui.<<', value=False, toggle=False)
     curr_frame_idx = pangolin.VarInt('ui.frame_idx', value=0, min=0, max=frame_size - 1)
+    reset_play = pangolin.VarBool('ui.Reset Play', value=False, toggle=False)
 
     print("Starting visualization loop...")
 
@@ -232,6 +277,12 @@ def main(data_dir):
         dcam.Activate(scam)
 
         frame_idx = curr_frame_idx.Get()
+
+        # Reset Play: jump to frame 0
+        if reset_play.Get():
+            reset_play.SetVal(False)
+            frame_idx = 0
+            curr_frame_idx.SetVal(frame_idx)
 
         # Auto play control
         if auto_play.Get():
@@ -262,16 +313,16 @@ def main(data_dir):
             draw_grid_y(1., center)
 
         # Draw global coordinate frame {G} (0.5m RGB axes)
-        # Global frame is fixed, z-axis aligned with gravity [0,0,+9.81]
+        # {G}原点在[0,0,0]，z轴对齐重力
         # X-axis: Red, Y-axis: Green, Z-axis: Blue
         if show_global_frame.Get():
             draw_coordinate_frame(np.eye(4), length=0.5, line_width=3)
 
         # Draw trajectory p_IinG (cyan line + current point)
         # IMU position in global frame over time
-        if show_trajectory.Get() and len(positions) > 1:
+        if show_p_IinG.Get() and len(p_IinG) > 1:
             # Draw trajectory as cyan line
-            traj_points = positions[:frame_idx+1]
+            traj_points = p_IinG[:frame_idx+1]
             if len(traj_points) > 1:
                 set_gl_color(Color.kCyan)
                 gl.glLineWidth(2.0)
@@ -280,33 +331,33 @@ def main(data_dir):
                     pangolin.DrawLine([traj_points[i], traj_points[i+1]])
 
             # Draw current position as a large cyan point
-            if frame_idx < len(positions):
+            if frame_idx < len(p_IinG):
                 set_gl_color(Color.kCyan)
                 gl.glPointSize(10.0)
-                pangolin.DrawPoints([positions[frame_idx]])
+                pangolin.DrawPoints([p_IinG[frame_idx]])
 
         # Draw start point (first frame position) as a large black point
-        if len(positions) > 0:
+        if len(p_IinG) > 0:
             set_gl_color(Color.kBlack)
             gl.glPointSize(15.0)  # Large point size
-            pangolin.DrawPoints([positions[0]])
+            pangolin.DrawPoints([p_IinG[0]])
 
-        # Draw q_GtoI (IMU frame orientation, 0.4m RGB axes)
-        # Shows rotation from global frame {G} to IMU frame {I}
+        # Draw q_ItoG (IMU frame orientation, 0.4m RGB axes)
+        # Shows rotation from IMU frame {I} to Global frame {G}
         # X-axis: Red, Y-axis: Green, Z-axis: Blue
-        if show_q_GtoI.Get() and frame_idx < len(positions):
-            current_pos = positions[frame_idx]
-            current_ori = orientations[frame_idx]
+        if show_q_ItoG.Get() and frame_idx < len(p_IinG):
+            p_IinG_curr = p_IinG[frame_idx]
+            q_ItoG_curr = q_ItoG[frame_idx]
 
-            # Create transform matrix T_GtoI (Global -> IMU)
-            # This represents q_GtoI transformation
-            T = np.eye(4)
-            R = quaternion_to_rotation_matrix(current_ori[0], current_ori[1], current_ori[2], current_ori[3])
-            T[:3, :3] = R
-            T[:3, 3] = current_pos
+            # Create transform matrix T_ItoG (IMU -> Global)
+            # This represents q_ItoG transformation
+            T_ItoG = np.eye(4)
+            R_ItoG = quaternion_to_rotation_matrix(q_ItoG_curr[0], q_ItoG_curr[1], q_ItoG_curr[2], q_ItoG_curr[3])
+            T_ItoG[:3, :3] = R_ItoG
+            T_ItoG[:3, 3] = p_IinG_curr
 
             # Draw IMU frame axes (0.4m, RGB)
-            draw_coordinate_frame(T, length=0.4, line_width=2)
+            draw_coordinate_frame(T_ItoG, length=0.4, line_width=2)
 
         # Draw v_IinG (velocity in global frame, 0.2s arrow)
         # Shows IMU velocity direction and magnitude in global frame
@@ -315,29 +366,47 @@ def main(data_dir):
         if show_v_IinG.Get() and frame_idx < len(odometry_data):
             twist = odometry_data[frame_idx]['twist']
             vel = twist['linear']
-            vel_imu_frame = np.array([vel['x'], vel['y'], vel['z']]) # This is v_IinI (in IMU frame)
+            v_IinI = np.array([vel['x'], vel['y'], vel['z']]) # Velocity in IMU frame
 
             # Get current orientation
-            if frame_idx < len(orientations):
-                current_pos = positions[frame_idx]
-                current_ori = orientations[frame_idx]
+            if frame_idx < len(q_ItoG):
+                p_IinG_curr = p_IinG[frame_idx]
+                q_ItoG_curr = q_ItoG[frame_idx]
 
-                # Get rotation matrix R_GtoI (Global -> IMU)
-                R_GtoI = quaternion_to_rotation_matrix(current_ori[0], current_ori[1], current_ori[2], current_ori[3])
+                # Get rotation matrix R_ItoG (IMU -> Global)
+                R_ItoG = quaternion_to_rotation_matrix(q_ItoG_curr[0], q_ItoG_curr[1], q_ItoG_curr[2], q_ItoG_curr[3])
 
                 # Transform velocity from IMU frame to global frame
-                # v_IinG = R_GtoI^T * v_IinI = R_ItoG * v_IinI
-                vel_global_frame = R_GtoI.T @ vel_imu_frame
+                # v_IinG = R_ItoG * v_IinI
+                v_IinG = R_ItoG @ v_IinI
 
                 # Scale velocity for visualization (0.2 second displacement)
                 vel_scale = 0.2
-                vel_end = current_pos + vel_global_frame * vel_scale
+                vel_end = p_IinG_curr + v_IinG * vel_scale
 
-                # Draw velocity arrow (green)
-                draw_arrow(current_pos, vel_end, line_width=2, color=Color.kGreen)
+                # Draw velocity arrow (magenta)
+                draw_arrow(p_IinG_curr, vel_end, line_width=2, color=Color.kMagenta)
 
-        # Draw MSCKF pointcloud
-        if show_pointcloud.Get() and frame_idx < len(points_data):
+        # Draw camera frames (cam0, cam1: 0.2m RGB axes)
+        # T_CtoG = T_ItoG @ T_CtoI
+        # T_CtoI from Kalibr calib (R_CtoI, p_CinI)
+        if show_cam_frustums.Get() and frame_idx < len(p_IinG) and len(cam_extrinsics) > 0:
+            p_IinG_curr = p_IinG[frame_idx]
+            q_ItoG_curr = q_ItoG[frame_idx]
+
+            # Build T_ItoG
+            T_ItoG = np.eye(4)
+            R_ItoG = quaternion_to_rotation_matrix(q_ItoG_curr[0], q_ItoG_curr[1], q_ItoG_curr[2], q_ItoG_curr[3])
+            T_ItoG[:3, :3] = R_ItoG
+            T_ItoG[:3, 3] = p_IinG_curr
+
+            for cam_id, T_CtoI in cam_extrinsics.items():
+                # T_CtoG = T_ItoG @ T_CtoI
+                T_CtoG = T_ItoG @ T_CtoI
+                draw_coordinate_frame(T_CtoG, length=0.2, line_width=2)
+
+        # Draw MSCKF pointcloud (pts_inG: points in Global frame)
+        if show_pts_inG.Get() and frame_idx < len(points_data):
             points_frame = points_data[frame_idx]
             if 'points' in points_frame and len(points_frame['points']) > 0:
                 # Extract point positions
@@ -350,18 +419,18 @@ def main(data_dir):
 
                     # Draw points in world frame (assuming points are in IMU frame)
                     # Transform to world frame using current pose
-                    if frame_idx < len(positions):
-                        current_pos = positions[frame_idx]
-                        current_ori = orientations[frame_idx]
+                    if frame_idx < len(p_IinG):
+                        p_IinG_curr = p_IinG[frame_idx]
+                        q_ItoG_curr = q_ItoG[frame_idx]
 
-                        # Create transform matrix
-                        T = np.eye(4)
-                        R = quaternion_to_rotation_matrix(current_ori[0], current_ori[1], current_ori[2], current_ori[3])
-                        T[:3, :3] = R
-                        T[:3, 3] = current_pos
+                        # Create transform matrix T_ItoG
+                        T_ItoG = np.eye(4)
+                        R_ItoG = quaternion_to_rotation_matrix(q_ItoG_curr[0], q_ItoG_curr[1], q_ItoG_curr[2], q_ItoG_curr[3])
+                        T_ItoG[:3, :3] = R_ItoG
+                        T_ItoG[:3, 3] = p_IinG_curr
 
                         # Transform points to world frame
-                        pts_world = transform_points(T, pts)
+                        pts_world = transform_points(T_ItoG, pts)
 
                         # Draw points
                         set_gl_color(Color.kOrange)
