@@ -125,3 +125,119 @@ global ──→ imu ──→ cam0
 JPL四元数（非Hamilton），存储顺序 `[x,y,z,w]`，左乘误差状态：`q_true = dq * q_hat`
 
 参考：Trawny & Roumeliotis (2005)
+
+---
+
+## 重力方向漂移问题
+
+**问题**：全局坐标系{G}的z轴初始化时对齐重力，但随时间漂移。
+
+**原因**：陀螺仪bias估计误差 + 噪声累积 + 视觉约束不足
+
+**OpenVINS策略**：
+- 初始化时估计重力方向（StaticInitializer.cpp:122-125）
+- 运行时固定为`[0,0,9.81]`（Propagator.cpp:57）
+- 不在线优化重力方向
+
+**实际影响**：
+- 短时间（<1min）：漂移小
+- 长时间（>5min）：漂移明显，需后处理对齐
+
+**解决方案**：评估时使用`posyaw`对齐（AlignTrajectory.h）
+
+**为什么不像其他系统在线优化重力？**
+- 精度提升有限（20-30%）
+- 实现复杂度显著增加（状态15→18维）
+- 数值稳定性问题
+- 工程权衡：简洁性 > 边际精度提升
+
+**代码位置**：
+- 重力初始化：`ov_init/src/static/StaticInitializer.cpp:122-125`
+- 重力传播：`ov_msckf/src/state/Propagator.cpp:57`
+- 轨迹对齐：`ov_eval/src/alignment/AlignTrajectory.h`
+
+---
+
+## 室内数据集真值获取方式
+
+**问题**：室内无人机/机器人数据集的真值如何获取？
+
+**答案**：使用**运动捕捉系统（Motion Capture, MoCap）**
+
+### 主流系统
+
+| 系统 | 精度 | 频率 | 应用场景 |
+|------|------|------|---------|
+| **Vicon** | 亚毫米级 | 100-200Hz | EuRoC MAV, TUM VI |
+| **OptiTrack** | 亚毫米级 | 100-240Hz | RPNG AR Table |
+| **Qualisys** | 亚毫米级 | 100-200Hz | 学术研究 |
+
+### 工作原理
+
+```
+室内空间安装多个红外摄像头 → 捕捉反光标记球 → 三角测量得到6DOF位姿
+```
+
+**关键步骤**：
+1. 室内安装8-24个红外摄像头（覆盖整个空间）
+2. 无人机/机器人贴上反光标记球
+3. 摄像头同步捕捉标记球位置
+4. 软件实时计算6DOF位姿（位置+姿态）
+5. 通过时间戳与IMU/相机数据对齐
+
+### 数据处理流程
+
+```cpp
+// 1. MoCap测量的是标记球的位姿，需要转换到IMU坐标系
+// 2. 使用vicon2gt工具优化（EuRoC V1_01_easy案例）
+// 参考：src/docs/gs-datasets.dox:25-28
+
+// 输入：MoCap位姿 + IMU测量
+// 输出：IMU轨迹真值（优化后）
+vicon2gt::optimize(mocap_poses, imu_measurements);
+```
+
+### 为什么都有真值？
+
+**研究需求**：
+- 算法性能评估需要基准
+- 误差量化分析
+- 算法对比公平性
+
+**成本考量**：
+- MoCap设备昂贵（$50k-$500k）
+- 室内空间有限（通常<10m×10m）
+- 仅限实验室环境
+
+### 局限性
+
+| 局限 | 说明 |
+|------|------|
+| **空间限制** | 仅限室内小范围（Vicon房间约8m×8m） |
+| **遮挡问题** | 标记球被遮挡时丢失真值 |
+| **成本高昂** | 设备+安装+维护费用高 |
+| **仅室内** | 无法用于室外/大范围场景 |
+
+### 实际案例
+
+**EuRoC MAV**（gs-datasets.dox:11-44）：
+- Vicon系统，200Hz
+- Vicon Room 1和2（约8m×8m）
+- Machine Hall（工业场景，真值质量较差）
+
+**TUM VI**（gs-datasets.dox:49-78）：
+- MoCap系统，仅room系列有完整真值
+- 室外数据无真值
+
+**RPNG AR Table**（gs-datasets.dox:82-101）：
+- OptiTrack，100Hz
+- 使用vicon2gt优化
+
+### 代码位置
+
+| 功能 | 文件 |
+|------|------|
+| 数据集说明 | `src/docs/gs-datasets.dox` |
+| 真值加载 | `ov_eval/src/utils/Loader.cpp` |
+| 轨迹对齐 | `ov_eval/src/alignment/AlignTrajectory.h` |
+| vicon2gt工具 | [GitHub链接](https://github.com/rpng/vicon2gt) |

@@ -206,12 +206,10 @@ def main(data_dir):
 
     show_top_view = pangolin.VarBool('ui.TopView', value=True, toggle=False)
     show_grid = pangolin.VarBool('ui.grid', value=True, toggle=True)
-    show_world_frame = pangolin.VarBool('ui.WorldFrame (W)', value=True, toggle=True)
-    show_trajectory = pangolin.VarBool('ui.trajectory', value=True, toggle=True)
-    show_current_pose = pangolin.VarBool('ui.IMU_frame (T_wi)', value=True, toggle=True)
-    show_cam_frames = pangolin.VarBool('ui.cam_frames (T_wc)', value=True, toggle=True)
-    show_velocity = pangolin.VarBool('ui.velocity', value=True, toggle=True)
-    show_covariance = pangolin.VarBool('ui.covariance', value=False, toggle=True)
+    show_global_frame = pangolin.VarBool('ui.GlobalFrame (G)', value=True, toggle=True)
+    show_trajectory = pangolin.VarBool('ui.p_IinG (trajectory)', value=True, toggle=True)
+    show_q_GtoI = pangolin.VarBool('ui.q_GtoI (IMU frame)', value=True, toggle=True)
+    show_v_IinG = pangolin.VarBool('ui.v_IinG (velocity)', value=True, toggle=True)
     show_pointcloud = pangolin.VarBool('ui.pointcloud', value=True, toggle=True)
     show_cam_images = pangolin.VarBool('ui.cam_images', value=True, toggle=True)
     auto_play = pangolin.VarBool('ui.Auto Play', value=False, toggle=False)
@@ -263,22 +261,29 @@ def main(data_dir):
         if show_grid.Get():
             draw_grid_y(1., center)
 
-        # Draw world frame (0.5m axes)
-        # World coordinate frame (W): Fixed reference frame at origin
+        # Draw global coordinate frame {G} (0.5m RGB axes)
+        # Global frame is fixed, z-axis aligned with gravity [0,0,+9.81]
         # X-axis: Red, Y-axis: Green, Z-axis: Blue
-        if show_world_frame.Get():
+        if show_global_frame.Get():
             draw_coordinate_frame(np.eye(4), length=0.5, line_width=3)
 
-        # Draw trajectory
+        # Draw trajectory p_IinG (cyan line + current point)
+        # IMU position in global frame over time
         if show_trajectory.Get() and len(positions) > 1:
-            set_gl_color(Color.kCyan)
-            gl.glLineWidth(2)
-
-            # Draw trajectory line
+            # Draw trajectory as cyan line
             traj_points = positions[:frame_idx+1]
             if len(traj_points) > 1:
+                set_gl_color(Color.kCyan)
+                gl.glLineWidth(2.0)
+                # Draw as connected line segments
                 for i in range(len(traj_points) - 1):
                     pangolin.DrawLine([traj_points[i], traj_points[i+1]])
+
+            # Draw current position as a large cyan point
+            if frame_idx < len(positions):
+                set_gl_color(Color.kCyan)
+                gl.glPointSize(10.0)
+                pangolin.DrawPoints([positions[frame_idx]])
 
         # Draw start point (first frame position) as a large black point
         if len(positions) > 0:
@@ -286,97 +291,50 @@ def main(data_dir):
             gl.glPointSize(15.0)  # Large point size
             pangolin.DrawPoints([positions[0]])
 
-        # Draw current pose (IMU frame, 0.4m axes)
-        # IMU coordinate frame (I): T_wi transformation from IMU to World
-        # Shows the current IMU pose in world frame
+        # Draw q_GtoI (IMU frame orientation, 0.4m RGB axes)
+        # Shows rotation from global frame {G} to IMU frame {I}
         # X-axis: Red, Y-axis: Green, Z-axis: Blue
-        if show_current_pose.Get() and frame_idx < len(positions):
+        if show_q_GtoI.Get() and frame_idx < len(positions):
             current_pos = positions[frame_idx]
             current_ori = orientations[frame_idx]
 
-            # Create transform matrix T_wi (World <- IMU)
+            # Create transform matrix T_GtoI (Global -> IMU)
+            # This represents q_GtoI transformation
             T = np.eye(4)
             R = quaternion_to_rotation_matrix(current_ori[0], current_ori[1], current_ori[2], current_ori[3])
             T[:3, :3] = R
             T[:3, 3] = current_pos
 
-            # Draw IMU pose axes (0.4m)
+            # Draw IMU frame axes (0.4m, RGB)
             draw_coordinate_frame(T, length=0.4, line_width=2)
 
-        # Draw camera frames (as frustums, 0.4m scale)
-        # Camera coordinate frames (C0, C1): T_wc0 and T_wc1 transformations
-        # T_wc = T_wi * T_ic (World <- IMU <- Camera)
-        # cam0 (left): Magenta frustum, cam1 (right): Cyan frustum
-        # Camera convention: Z-axis forward, X-axis right, Y-axis down
-        if show_cam_frames.Get() and frame_idx < len(positions):
-            current_pos = positions[frame_idx]
-            current_ori = orientations[frame_idx]
-
-            # Create IMU transform matrix T_wi (World <- IMU)
-            T_imu = np.eye(4)
-            R = quaternion_to_rotation_matrix(current_ori[0], current_ori[1], current_ori[2], current_ori[3])
-            T_imu[:3, :3] = R
-            T_imu[:3, 3] = current_pos
-
-            # T_cam0 = T_wi * T_ic0 (World <- IMU <- cam0)
-            # T_cam1 = T_wi * T_ic1 (World <- IMU <- cam1)
-            # Using typical stereo camera setup: cameras along X axis of IMU
-            # cam0: left, cam1: right, both looking forward along Z axis of IMU
-            # These are approximate; replace with actual extrinsics if available
-            T_ic0 = np.eye(4)  # cam0 = IMU frame (identity as placeholder)
-            T_ic1 = np.eye(4)  # cam1 = IMU frame (identity as placeholder)
-
-            T_cam0 = T_imu @ T_ic0
-            T_cam1 = T_imu @ T_ic1
-
-            # Draw cam0 frustum (magenta, 0.4m)
-            draw_camera_frustum(T_cam0, scale=0.4, line_width=2, color=Color.kMagenta)
-
-            # Draw cam1 frustum (cyan, 0.4m)
-            draw_camera_frustum(T_cam1, scale=0.4, line_width=2, color=Color.kCyan)
-
-        # Draw velocity vector
-        if show_velocity.Get() and frame_idx < len(odometry_data):
+        # Draw v_IinG (velocity in global frame, 0.2s arrow)
+        # Shows IMU velocity direction and magnitude in global frame
+        # NOTE: The velocity from odomimu is in IMU frame (v_IinI)
+        # We need to transform it to global frame (v_IinG) for visualization
+        if show_v_IinG.Get() and frame_idx < len(odometry_data):
             twist = odometry_data[frame_idx]['twist']
             vel = twist['linear']
-            vel_vector = np.array([vel['x'], vel['y'], vel['z']])
+            vel_imu_frame = np.array([vel['x'], vel['y'], vel['z']]) # This is v_IinI (in IMU frame)
 
-            # Get current position
-            if frame_idx < len(positions):
+            # Get current orientation
+            if frame_idx < len(orientations):
                 current_pos = positions[frame_idx]
+                current_ori = orientations[frame_idx]
 
-                # Scale velocity for visualization (multiply by time to show displacement)
-                vel_scale = 1.0  # 1 second displacement
-                vel_end = current_pos + vel_vector * vel_scale
+                # Get rotation matrix R_GtoI (Global -> IMU)
+                R_GtoI = quaternion_to_rotation_matrix(current_ori[0], current_ori[1], current_ori[2], current_ori[3])
 
-                # Draw velocity arrow
+                # Transform velocity from IMU frame to global frame
+                # v_IinG = R_GtoI^T * v_IinI = R_ItoG * v_IinI
+                vel_global_frame = R_GtoI.T @ vel_imu_frame
+
+                # Scale velocity for visualization (0.2 second displacement)
+                vel_scale = 0.2
+                vel_end = current_pos + vel_global_frame * vel_scale
+
+                # Draw velocity arrow (green)
                 draw_arrow(current_pos, vel_end, line_width=2, color=Color.kGreen)
-
-        # Draw covariance ellipse (position part only)
-        if show_covariance.Get() and frame_idx < len(covariances):
-            current_pos = positions[frame_idx]
-            pos_cov = covariances[frame_idx][:3, :3]
-
-            # Draw uncertainty ellipse (3-sigma)
-            try:
-                eigenvalues, eigenvectors = np.linalg.eigh(pos_cov)
-                idx = eigenvalues.argsort()[::-1]
-                eigenvalues = eigenvalues[idx]
-                eigenvectors = eigenvectors[:, idx]
-
-                radii = np.sqrt(eigenvalues) * 3.0  # 3-sigma
-
-                set_gl_color(Color.kYellow)
-                gl.glLineWidth(1)
-
-                # Draw principal axes
-                for i in range(3):
-                    axis = eigenvectors[:, i] * radii[i]
-                    start = current_pos - axis
-                    end = current_pos + axis
-                    pangolin.DrawLine([start, end])
-            except:
-                pass
 
         # Draw MSCKF pointcloud
         if show_pointcloud.Get() and frame_idx < len(points_data):
